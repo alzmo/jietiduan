@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from collections import Counter
 from typing import Dict, List, Optional, Tuple
 
 
@@ -32,6 +33,7 @@ def solve_level(level: dict, max_solutions: int = 10, max_nodes: int = 10000) ->
     solution_count = 0
     expanded_nodes = 0
     node_limit_hit = False
+    failed_states = set()
 
     def dfs(
         remaining: Dict[int, List[str]],
@@ -56,10 +58,16 @@ def solve_level(level: dict, max_solutions: int = 10, max_nodes: int = 10000) ->
                 first_solution = path[:]
             return
 
-        clickable_cells = sorted(cell_id for cell_id, stack in remaining.items() if stack)
-        if not clickable_cells:
+        state_key = _build_state_key(remaining, baskets, temp_storage, basket_index)
+        if state_key in failed_states:
             return
 
+        clickable_cells = _prioritize_clickable_cells(remaining, baskets, temp_storage)
+        if not clickable_cells:
+            failed_states.add(state_key)
+            return
+
+        solution_count_before = solution_count
         for cell_id in clickable_cells:
             if solution_count >= max_solutions:
                 return
@@ -97,6 +105,13 @@ def solve_level(level: dict, max_solutions: int = 10, max_nodes: int = 10000) ->
                 continue
 
             dfs(next_remaining, resolved_baskets, resolved_temp, resolved_index, next_path)
+
+        if (
+            solution_count == solution_count_before
+            and not node_limit_hit
+            and solution_count < max_solutions
+        ):
+            failed_states.add(state_key)
 
     dfs(remaining_blocks, active_baskets, [], 2, [])
 
@@ -136,6 +151,53 @@ def _build_stacks(blocks: List[dict]) -> Dict[int, List[str]]:
         entries.sort(key=lambda item: item[0])
         result[cell_id] = [color for _, color in entries]
     return result
+
+
+def _build_state_key(
+    remaining: Dict[int, List[str]],
+    baskets: List[dict],
+    temp_storage: List[str],
+    basket_index: int,
+) -> Tuple[Tuple[Tuple[int, Tuple[str, ...]], ...], Tuple[Tuple[str, int], ...], Tuple[Tuple[str, int], ...], int]:
+    remaining_key = tuple(
+        (cell_id, tuple(stack)) for cell_id, stack in sorted(remaining.items(), key=lambda item: item[0])
+    )
+    baskets_key = tuple((str(basket["color"]), int(basket["count"])) for basket in baskets)
+    temp_counter = Counter(temp_storage)
+    temp_key = tuple(sorted(temp_counter.items(), key=lambda item: item[0]))
+    return remaining_key, baskets_key, temp_key, basket_index
+
+
+def _prioritize_clickable_cells(
+    remaining: Dict[int, List[str]],
+    baskets: List[dict],
+    temp_storage: List[str],
+) -> List[int]:
+    basket_counts = {basket["color"]: int(basket["count"]) for basket in baskets}
+    temp_colors = set(temp_storage)
+
+    def sort_key(cell_id: int) -> Tuple[int, int, int, int, int]:
+        color = remaining[cell_id][-1]
+        in_basket = color in basket_counts
+        distance_to_full = 3
+        if in_basket:
+            after_count = basket_counts[color] + 1
+            distance_to_full = max(0, 3 - after_count)
+
+        has_temp_match = color in temp_colors
+        introduces_new_temp_color = 0 if (in_basket or has_temp_match) else 1
+
+        return (
+            0 if in_basket else 1,
+            distance_to_full,
+            0 if has_temp_match else 1,
+            introduces_new_temp_color,
+            cell_id,
+        )
+
+    clickable_cells = [cell_id for cell_id, stack in remaining.items() if stack]
+    clickable_cells.sort(key=sort_key)
+    return clickable_cells
 
 
 def _all_cleared(remaining: Dict[int, List[str]]) -> bool:
